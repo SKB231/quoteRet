@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"text/template"
 	"time"
 
@@ -13,33 +13,10 @@ import (
 )
 
 type FakeUserAgentsResponse struct {
-	Result []map[string]string `json:"result"`
-}
-
-type FakeUserAgentsResponseNew struct {
 	Result []string `json:"result"`
 }
 
-func getFakeUserAgents() {
-	scrapeopsAPIKey := "7a23f97c-aada-4964-9e1c-cf16b3dfc762"
-	endpoint := "http://headers.scrapeops.io/v1/user-agents?api_key=" + scrapeopsAPIKey
-
-	req, _ := http.NewRequest("GET", endpoint, nil)
-	httpClient := &http.Client{Timeout: 10 * time.Second}
-	resp, err := httpClient.Do(req)
-	if err == nil && resp.StatusCode == 200 {
-		var fakeUserAgentResponse FakeUserAgentsResponse = FakeUserAgentsResponse{}
-		err = json.NewDecoder(resp.Body).Decode(&fakeUserAgentResponse)
-		if err != nil {
-			fmt.Println("err during decode process.")
-		}
-		for _, usa := range fakeUserAgentResponse.Result {
-			fmt.Println(usa)
-		}
-	}
-}
-
-func GetUserAgentList() {
+func GetUserAgentList(fakeUserAgentsBuffer chan string) {
 	// ScrapeOps User-Agent API Endpint
 	scrapeopsAPIKey := "7a23f97c-aada-4964-9e1c-cf16b3dfc762"
 	scrapeopsAPIEndpoint := "http://headers.scrapeops.io/v1/user-agents?api_key=" + scrapeopsAPIKey
@@ -48,28 +25,38 @@ func GetUserAgentList() {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
-
 	// Make Request
 	resp, err := client.Do(req)
 	if err == nil && resp.StatusCode == 200 {
 		defer resp.Body.Close()
 		// Convert Body To JSON
-		var fakeUserAgentResponse FakeUserAgentsResponseNew
+		var fakeUserAgentResponse FakeUserAgentsResponse
 		json.NewDecoder(resp.Body).Decode(&fakeUserAgentResponse)
-		fmt.Println(fakeUserAgentResponse.Result)
+		for i := 0; i < len(fakeUserAgentResponse.Result); i += 1 {
+			fakeUserAgentsBuffer <- fakeUserAgentResponse.Result[i]
+		}
 	}
 }
 
-func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
-	fmt.Println("Quote is ", quote)
+func getQuotePriceTest(quote string, c *colly.Collector, userAgent string, version int) float32 {
 	URL := fmt.Sprintf("https://finance.yahoo.com/quote/%v", quote)
 	var quotePrice float32
+
+	c.SetRequestTimeout(25 * time.Second)
+	c.Limit(&colly.LimitRule{RandomDelay: 500 * time.Millisecond})
+
 	c.OnRequest(func(r *colly.Request) {
 		r.Headers.Set("User-Agent", userAgent)
 		fmt.Println("Visiting ", r.AbsoluteURL(string(r.URL.String())))
 	})
 	quoteSelector := fmt.Sprintf(`fin-streamer[data-symbol=%v][data-field=regularMarketPrice]`, quote)
-
+	timeSelector := fmt.Sprintf(`div[id=quote-market-notice]`)
+	c.OnResponse(func(r *colly.Response) {
+		fmt.Println(r.StatusCode)
+	})
+	c.OnHTML(timeSelector, func(r *colly.HTMLElement) {
+		fmt.Println(r.Text)
+	})
 	c.OnHTML(quoteSelector, func(r *colly.HTMLElement) {
 		qprice, err := strconv.ParseFloat(r.Text, 32)
 		if err != nil {
@@ -77,22 +64,92 @@ func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
 			quotePrice = -1
 		} else {
 			quotePrice = float32(qprice)
+			fmt.Println("HTML quote price", quotePrice)
 		}
 	})
-	c.Visit(URL)
-	fmt.Println(quotePrice)
+	fmt.Println("Calling Visit on URL ", URL, " ", version)
+	err := c.Visit(URL)
+	if err != nil {
+		fmt.Println("An error occured: for version", version, " => ", err)
+		return -1
+	}
+	fmt.Println("Done ", version)
 	return quotePrice
 }
 
+func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
+	URL := fmt.Sprintf("https://finance.yahoo.com/quote/%v", quote)
+	var quotePrice float32
+	var wg sync.WaitGroup
+	wg.Add(1)
+	c.OnRequest(func(r *colly.Request) {
+		r.Headers.Set("User-Agent", userAgent)
+		fmt.Println("Visiting ", r.AbsoluteURL(string(r.URL.String())))
+	})
+	quoteSelector := fmt.Sprintf(`fin-streamer[data-symbol=%v][data-field=regularMarketPrice]`, quote)
+	c.OnResponse(func(r *colly.Response) {
+		fmt.Println(r.StatusCode)
+	})
+	c.OnHTML(quoteSelector, func(r *colly.HTMLElement) {
+		defer wg.Done()
+		qprice, err := strconv.ParseFloat(r.Text, 32)
+		if err != nil {
+			fmt.Println("Error when parsing float price.")
+			quotePrice = -1
+		} else {
+			quotePrice = float32(qprice)
+			fmt.Println("HTML quote price", quotePrice)
+		}
+	})
+	fmt.Println("Calling Visit on URL ", URL)
+	c.Visit(URL)
+	wg.Wait()
+	return quotePrice
+}
+
+var fakeUserAgents = make(chan string, 100)
+
+var c *colly.Collector = colly.NewCollector(
+	colly.AllowURLRevisit(),
+)
+
 func handleStringQuotePrice(w http.ResponseWriter, r *http.Request) {
-	c := colly.NewCollector()
-
 	quoteName := r.URL.Query().Get("quote")
-	fmt.Printf("quote name is ", quoteName)
-
-	userAgent := "1 Mozilla/5.0 (iPad; CPU OS 12_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
+	// collector := c.Clone()
+	userAgent := <-fakeUserAgents
+	fmt.Println("Calling getQuotePrice with", quoteName, userAgent)
 	price := getQuotePrice(quoteName, c, userAgent)
 	fmt.Fprintf(w, "%v", price)
+}
+
+/*
+*
+* Get the next count prices from quote <quotename>
+*
+ */
+func GetNextCountPrices(count int, quotename string, c *colly.Collector) {
+	allPricesBuffer := make(chan float32, count)
+	for i := 0; i < count; i += 1 {
+		go func(version int) {
+			collector := c.Clone()
+			// collector := *colly.NewCollector(colly.AllowURLRevisit())
+			allPricesBuffer <- getQuotePriceTest(quotename, collector, <-fakeUserAgents, version)
+		}(i)
+		time.Sleep(500 * time.Millisecond)
+	}
+	i := 0
+	result := []float32{}
+	for price := range allPricesBuffer {
+		fmt.Println("Price: ", price, " ", i)
+		result = append(result, price)
+		i += 1
+		if i >= count {
+			close(allPricesBuffer)
+			break
+		}
+	}
+
+	fmt.Println(result)
 }
 
 func main() {
@@ -118,8 +175,19 @@ func main() {
 			fmt.Fprintf(w, "505 error 2")
 		}
 	}))
+	go func() {
+		for {
+			// fmt.Println("Fake users list length ", len(fakeUserAgents))
+			if len(fakeUserAgents) < 10 {
+				fmt.Println("Getting more fake user agents.")
+				GetUserAgentList(fakeUserAgents)
+				fmt.Println("New Count: ", len(fakeUserAgents))
+			}
+		}
+	}()
+	GetNextCountPrices(5, "AAPL", c)
+	GetNextCountPrices(1, "AAPL", c)
 
-	GetUserAgentList()
-	fmt.Println("Listening to port 8080!")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// fmt.Println("Listening to port 8080!")
+	// log.Fatal(http.ListenAndServe(":8080", nil))
 }
