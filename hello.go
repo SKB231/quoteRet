@@ -157,13 +157,43 @@ var upgrader websocket.Upgrader = websocket.Upgrader{
 const COUNT int = 1000 // The default value of the number of quoteprices to return from the GetNextCountPrices func
 
 // TODO: have a quit channel to quit when connection is deleted.
-func recieveQuotes(allPricesBuffer chan priceBufferType) {
+func recieveQuotes(allPricesBuffer chan priceBufferType, quit chan bool) {
 	for {
 		select {
 		case nextPrice := <-allPricesBuffer:
 			fmt.Println(nextPrice)
+		case <-quit:
+			break
 		}
 	}
+}
+
+type ConnectionKey struct {
+	Connection *websocket.Conn
+	Quote      string
+}
+
+// connections map handling function. Make sure to use mutex properly and key check before retriving values.
+var (
+	connectionsMap map[ConnectionKey](chan bool) = make(map[ConnectionKey](chan bool))
+	mu             sync.Mutex                    // Mutex to shared resource connectionsMap
+)
+
+func checkKeyExists(conn *websocket.Conn, quote string) bool {
+	_, keyExists := connectionsMap[ConnectionKey{conn, quote}]
+	return keyExists == true
+}
+
+func addKey(conn *websocket.Conn, quote string) chan bool {
+	key := ConnectionKey{conn, quote}
+	quitChannel := make(chan bool)
+	connectionsMap[key] = quitChannel
+	return quitChannel
+}
+
+func getValue(conn *websocket.Conn, quote string) chan bool {
+	key := ConnectionKey{conn, quote}
+	return connectionsMap[key]
 }
 
 func Reader(conn *websocket.Conn) {
@@ -171,24 +201,16 @@ func Reader(conn *websocket.Conn) {
 	  The reader essentialy reads the readBuffer continously till int encounters errors or the connection closes.
 	*/
 	defer conn.Close() // Gracefully delete the connection upon the end of the method.
+	allPricesBuffer := make(chan priceBufferType, COUNT)
+	quit := make(chan bool)
+
+	go recieveQuotes(allPricesBuffer, quit)
+
 	/*
-			i := 0
-		result := []priceBufferType{}
-		for PriceTuple := range allPricesBuffer {
-		  fmt.Println("Price: ", PriceTuple.price, PriceTuple.time, " ", i)
-		  result = append(result, PriceTuple)
-		  i += 1
-		  if i >= count {
-		    close(allPricesBuffer)
-		    break
-		  }
-		}
-
-
+	  To keep track of all subscribed quotes, we keep track of thier respective quit channels in a map with the key being a struct containing the quotename and connection, and value being the associated quit channel pointer
+	  Whenever the user requests to stop subscribing, we remove the key value pair and send to quit channel. This should stop the goruitne controlling the getQuotePrice for the associated company
 	*/
 
-	allPricesBuffer := make(chan priceBufferType, COUNT)
-	go recieveQuotes(allPricesBuffer)
 	for {
 		// Message Type || message (p) || error
 		messageType, p, err := conn.ReadMessage()
@@ -204,6 +226,13 @@ func Reader(conn *websocket.Conn) {
 		fmt.Println(splits)
 		switch {
 		case splits[0] == "QUOTE":
+			mu.Lock()
+			if checkKeyExists(conn, splits[1]) {
+				fmt.Println("KEY already exists. Continuing")
+				mu.Unlock()
+				continue
+			}
+			mu.Unlock()
 			fmt.Println("Tracking quote ", splits[1], " of length ", len(splits[1]))
 			go GetNextCountPrices(COUNT, splits[1], c, allPricesBuffer)
 			if err = conn.WriteMessage(messageType, []byte(fmt.Sprintf("Tracking quote %v", splits[1]))); err != nil {
@@ -216,6 +245,7 @@ func Reader(conn *websocket.Conn) {
 			}
 		default:
 			fmt.Printf("Unknown option requested terminationg connection")
+			quit <- true
 			break
 		}
 		// Now that we were able to print the client message, return it back using the write message function
