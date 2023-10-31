@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -149,7 +150,7 @@ func GetNextCountPrices(count int, quotename string, c *colly.Collector) {
 		}
 	}
 
-	fmt.Println(result)
+	fmt.Println()
 }
 
 func main() {
@@ -185,9 +186,9 @@ func main() {
 			}
 		}
 	}()
-	GetNextCountPrices(5, "AAPL", c)
-	GetNextCountPrices(1, "AAPL", c)
+	// GetNextCountPrices(5, "AAPL", c)
+	// GetNextCountPrices(1, "AAPL", c)
 
 	// fmt.Println("Listening to port 8080!")
-	// log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
