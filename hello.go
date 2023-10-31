@@ -50,13 +50,10 @@ func getQuotePriceAndTime(quote string, c *colly.Collector, userAgent string, ve
 
 	c.OnRequest(func(r *colly.Request) {
 		r.Headers.Set("User-Agent", userAgent)
-		fmt.Println("Visiting ", r.AbsoluteURL(string(r.URL.String())))
+		// fmt.Println("Visiting ", r.AbsoluteURL(string(r.URL.String())))
 	})
 	quoteSelector := fmt.Sprintf(`fin-streamer[data-symbol=%v][data-field=regularMarketPrice]`, quote)
 	timeSelector := fmt.Sprintf(`div[id=quote-market-notice]`)
-	c.OnResponse(func(r *colly.Response) {
-		fmt.Println(r.StatusCode)
-	})
 	c.OnHTML(timeSelector, func(r *colly.HTMLElement) {
 		quoteTime = r.Text
 	})
@@ -67,19 +64,19 @@ func getQuotePriceAndTime(quote string, c *colly.Collector, userAgent string, ve
 			quotePrice = -1
 		} else {
 			quotePrice = float32(qprice)
-			fmt.Println("HTML quote price", quotePrice)
+			// fmt.Println("HTML quote price", quotePrice)
 		}
 	})
-	fmt.Println("Calling Visit on URL ", URL, " ", version)
+	// fmt.Println("Calling Visit on URL ", URL, " ", version)
 	err := c.Visit(URL)
 	if err != nil {
 		fmt.Println("An error occured: for version", version, " => ", err)
 		return -1, ""
 	}
-	fmt.Println("Done ", version)
 	return quotePrice, quoteTime
 }
 
+// FOR SIMPLE HTTP CALLS
 func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
 	URL := fmt.Sprintf("https://finance.yahoo.com/quote/%v", quote)
 	var quotePrice float32
@@ -136,15 +133,22 @@ type priceBufferType struct {
 * Get the next count prices from quote <quotename>
 *
  */
-func GetNextCountPrices(count int, quotename string, c *colly.Collector, allPricesBuffer chan priceBufferType) {
+func GetNextCountPrices(count int, quotename string, c *colly.Collector, allPricesBuffer chan priceBufferType, quit chan bool) {
+Loop:
 	for i := 0; i < count; i += 1 {
-		go func(version int) {
-			collector := c.Clone()
-			// collector := *colly.NewCollector(colly.AllowURLRevisit())
-			quotePrice, time := getQuotePriceAndTime(quotename, collector, <-fakeUserAgents, version)
-			allPricesBuffer <- priceBufferType{quotename, quotePrice, time}
-		}(i)
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-quit:
+			fmt.Println("STOP GETTING PRICES")
+			break Loop
+		default:
+			go func(version int) {
+				collector := c.Clone()
+				// collector := *colly.NewCollector(colly.AllowURLRevisit())
+				quotePrice, time := getQuotePriceAndTime(quotename, collector, <-fakeUserAgents, version)
+				allPricesBuffer <- priceBufferType{quotename, quotePrice, time}
+			}(i)
+			time.Sleep(1500 * time.Millisecond)
+		}
 	}
 	fmt.Println("DONE")
 }
@@ -157,12 +161,14 @@ var upgrader websocket.Upgrader = websocket.Upgrader{
 const COUNT int = 1000 // The default value of the number of quoteprices to return from the GetNextCountPrices func
 
 // TODO: have a quit channel to quit when connection is deleted.
-func recieveQuotes(allPricesBuffer chan priceBufferType, quit chan bool) {
+func recieveQuotes(allPricesBuffer chan priceBufferType, quit chan bool, conn *websocket.Conn) {
 	for {
 		select {
 		case nextPrice := <-allPricesBuffer:
 			fmt.Println(nextPrice)
+			conn.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("%v", nextPrice)))
 		case <-quit:
+			fmt.Println("QUIT REQUESTED")
 			break
 		}
 	}
@@ -196,6 +202,12 @@ func getValue(conn *websocket.Conn, quote string) chan bool {
 	return connectionsMap[key]
 }
 
+func deletePair(conn *websocket.Conn, quote string) {
+	key := ConnectionKey{conn, quote}
+
+	delete(connectionsMap, key)
+}
+
 func Reader(conn *websocket.Conn) {
 	/**
 	  The reader essentialy reads the readBuffer continously till int encounters errors or the connection closes.
@@ -204,20 +216,38 @@ func Reader(conn *websocket.Conn) {
 	allPricesBuffer := make(chan priceBufferType, COUNT)
 	quit := make(chan bool)
 
-	go recieveQuotes(allPricesBuffer, quit)
+	go recieveQuotes(allPricesBuffer, quit, conn)
 
+	stopAllRecieves := func(connectionToStop *websocket.Conn) {
+		mu.Lock()
+		for key, val := range connectionsMap {
+			if key.Connection != connectionToStop {
+				continue
+			}
+			quitChannel := val
+			deletePair(key.Connection, key.Quote)
+			quitChannel <- true
+		}
+		mu.Unlock()
+	}
+
+	defer stopAllRecieves(conn)
 	/*
 	  To keep track of all subscribed quotes, we keep track of thier respective quit channels in a map with the key being a struct containing the quotename and connection, and value being the associated quit channel pointer
 	  Whenever the user requests to stop subscribing, we remove the key value pair and send to quit channel. This should stop the goruitne controlling the getQuotePrice for the associated company
 	*/
-
+Loop_Main:
 	for {
 		// Message Type || message (p) || error
 		messageType, p, err := conn.ReadMessage()
 		if err != nil {
 			fmt.Println("Error occured when reading message. Breaking connection")
 			fmt.Println(err)
-			break
+			err := conn.Close()
+			if err != nil {
+				fmt.Println("Error when breaking connection, ", err)
+			}
+			break Loop_Main
 		}
 		fmt.Println(string(p))
 		userMessage := string(p)
@@ -232,21 +262,52 @@ func Reader(conn *websocket.Conn) {
 				mu.Unlock()
 				continue
 			}
+			// new key.
+			quitChan := addKey(conn, splits[1])
 			mu.Unlock()
 			fmt.Println("Tracking quote ", splits[1], " of length ", len(splits[1]))
-			go GetNextCountPrices(COUNT, splits[1], c, allPricesBuffer)
+			go GetNextCountPrices(COUNT, splits[1], c, allPricesBuffer, quitChan)
 			if err = conn.WriteMessage(messageType, []byte(fmt.Sprintf("Tracking quote %v", splits[1]))); err != nil {
-				break
+				fmt.Println("Error when writing message! Breaking connection.")
+				err = conn.Close()
+				if err != nil {
+					fmt.Println("Error when breaking connection.")
+					fmt.Println(err)
+				}
+				break Loop_Main
 			}
 		case splits[0] == "DELETE":
 			fmt.Printf("Stop tracking quote %v", splits[1])
+			fmt.Println(connectionsMap, checkKeyExists(conn, splits[1]))
+			mu.Lock()
+			if !checkKeyExists(conn, splits[1]) {
+				if err := conn.WriteMessage(messageType, []byte("The quote is not subscribed to.")); err != nil {
+					mu.Unlock()
+					continue
+				}
+			} else {
+				quitChannel := getValue(conn, splits[1])
+				quitChannel <- true
+				deletePair(conn, splits[1])
+				fmt.Println("DELETED THE PAIR", connectionsMap)
+			}
+			mu.Unlock()
 			if err = conn.WriteMessage(messageType, []byte(fmt.Sprintf("Stop tracking quote %v", splits[1]))); err != nil {
-				break
+				fmt.Println("Error when writing message! Breaking connection.")
+				err = conn.Close()
+				if err != nil {
+					fmt.Println("Error when breaking connection.")
+					fmt.Println(err)
+				}
 			}
 		default:
 			fmt.Printf("Unknown option requested terminationg connection")
-			quit <- true
-			break
+			err = conn.Close()
+			if err != nil {
+				fmt.Println("Error when breaking connection.")
+				fmt.Println(err)
+			}
+			break Loop_Main
 		}
 		// Now that we were able to print the client message, return it back using the write message function
 		if err != nil {
