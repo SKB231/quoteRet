@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gocolly/colly"
+	"github.com/gorilla/websocket"
 )
 
 type FakeUserAgentsResponse struct {
@@ -153,9 +154,45 @@ func GetNextCountPrices(count int, quotename string, c *colly.Collector) {
 	fmt.Println()
 }
 
+var upgrader websocket.Upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+}
+
+func Reader(conn *websocket.Conn) {
+	/**
+	  The reader essentialy reads the readBuffer continously till int encounters errors or the connection closes.
+	*/
+
+	for {
+		// Message Type || message (p) || error
+		messageType, p, err := conn.ReadMessage()
+		if err != nil {
+			fmt.Println("Error occured when reading message. Breaking connection")
+			fmt.Println(err)
+			break
+		}
+		fmt.Println(string(p))
+		// Now that we were able to print the client message, return it back using the write message function
+		if err := conn.WriteMessage(messageType, p); err != nil {
+			fmt.Println("ERR when writing back!", err)
+		}
+	}
+}
+
+func wsEndpoint(w http.ResponseWriter, r *http.Request) {
+	ws, err := upgrader.Upgrade(w, r, nil) // Attempt to upgrade the request. This involves checking the client headers to check if the necessary headers are set.
+	if err != nil {
+		fmt.Println("Error occured when upgrading connection!", err)
+		return
+	}
+	fmt.Println("Client connected!")
+	Reader(ws)
+}
+
 func main() {
 	http.Handle("/quotePrice", http.HandlerFunc(handleStringQuotePrice))
-
+	http.Handle("/ws", http.HandlerFunc(wsEndpoint))
 	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Request URL is ", r.URL)
 		tmpl, err := template.ParseFiles("template.html")
