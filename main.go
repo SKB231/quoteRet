@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,7 +22,7 @@ type FakeUserAgentsResponse struct {
 
 func GetUserAgentList(fakeUserAgentsBuffer chan string) {
 	// ScrapeOps User-Agent API Endpint
-	scrapeopsAPIKey := "7a23f97c-aada-4964-9e1c-cf16b3dfc762"
+	scrapeopsAPIKey := os.Getenv("SCRAPE_OPS_KEY")
 	scrapeopsAPIEndpoint := "http://headers.scrapeops.io/v1/user-agents?api_key=" + scrapeopsAPIKey
 
 	req, _ := http.NewRequest("GET", scrapeopsAPIEndpoint, nil)
@@ -363,5 +364,6 @@ func main() {
 	// GetNextCountPrices(1, "AAPL", c)
 
 	// fmt.Println("Listening to port 8080!")
+	listenTo := "0.0.0.0" + os.Getenv("PORT")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
