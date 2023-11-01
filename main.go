@@ -90,7 +90,6 @@ func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
 		fmt.Println(r.StatusCode)
 	})
 	c.OnHTML(quoteSelector, func(r *colly.HTMLElement) {
-		defer wg.Done()
 		qprice, err := strconv.ParseFloat(r.Text, 32)
 		if err != nil {
 			fmt.Println("Error when parsing float price.")
