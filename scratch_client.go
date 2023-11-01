@@ -8,7 +8,8 @@ import (
 	"github.com/SKB231/quoteRet/utils"
 )
 
-func main() {
+// Just a simple test client to see how sockets work
+func initialzie_client() {
 	if len(os.Args) != 2 {
 		fmt.Fprintf(os.Stderr, "Usage: %s host:port", os.Args[0])
 	}

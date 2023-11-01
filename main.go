@@ -364,6 +364,6 @@ func main() {
 	// GetNextCountPrices(1, "AAPL", c)
 
 	// fmt.Println("Listening to port 8080!")
-	listenTo := "0.0.0.0" + os.Getenv("PORT")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	listenTo := os.Getenv("ADDRESS") + ":" + os.Getenv("PORT")
+	log.Fatal(http.ListenAndServe(listenTo, nil))
 }

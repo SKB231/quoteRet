@@ -8,7 +8,7 @@ import (
 	"github.com/SKB231/quoteRet/utils"
 )
 
-func main() {
+func initialize_server() {
 	service := ":7777"
 	tcpAddress, err := net.ResolveTCPAddr("tcp4", service) // resolve to localhost:7777
 	utils.CheckErr(err)
