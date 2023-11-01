@@ -1,7 +1,7 @@
 FROM golang:1.21.3
 
 WORKDIR /app
-COPY template.html .
+
 COPY go.mod .
 COPY main.go .
 COPY go.sum .
