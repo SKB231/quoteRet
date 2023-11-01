@@ -81,8 +81,6 @@ func getQuotePriceAndTime(quote string, c *colly.Collector, userAgent string, ve
 func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
 	URL := fmt.Sprintf("https://finance.yahoo.com/quote/%v", quote)
 	var quotePrice float32
-	var wg sync.WaitGroup
-	wg.Add(1)
 	c.OnRequest(func(r *colly.Request) {
 		r.Headers.Set("User-Agent", userAgent)
 		fmt.Println("Visiting ", r.AbsoluteURL(string(r.URL.String())))
@@ -104,7 +102,6 @@ func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
 	})
 	fmt.Println("Calling Visit on URL ", URL)
 	c.Visit(URL)
-	wg.Wait()
 	return quotePrice
 }
 
