@@ -333,12 +333,7 @@ func main() {
 			fmt.Fprintf(w, "505 error")
 		}
 
-		finalMessage := "This page is still under construction!"
-		data := struct {
-			Message string
-		}{
-			Message: finalMessage,
-		}
+		data := struct{}{}
 
 		err = tmpl.Execute(w, data)
 

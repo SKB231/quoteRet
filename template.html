@@ -1,9 +1,178 @@
 <html>
   <head>
     <title>quoteRet</title>
-  </head>
+     <script
+      src="https://unpkg.com/htmx.org@1.9.6"
+      integrity="sha384-FhXw7b6AlE/jyjlZH5iHa/tTe9EpJ1Y55RjcgPbjeWMskSxZt1v9qkxLJWNJaGni"
+      crossorigin="anonymous"
+    ></script>
+<style>
+        /* Paste your CSS code here */
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+            color: #333;
+        }
+
+        .streamer {
+            background-color: white;
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .dataStreamerField {
+            background-color: #e9ecef;
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-line;
+        }
+
+        h1, h3 {
+            text-align: center;
+        }
+    </style>
+    <link rel="stylesheet" href="style.css"/>
   <body>
-    <h1>Hi Welcome to the page!</h1>
-    <p>{{.Message}}</p>
-  </body>
+    <h1>Quote Retriver</h1>
+      <div class="streamer">
+ <label for="quotePriceInput">Quote Price</label>
+    <input type="text" hx-get="/quotePrice" name="quote" hx-trigger="keyup delay:500ms change" hx-target="#search-result">
+    </input>
+      <div id="search-result" class="dataStreamerField">
+          Search Quotes for results to come up
+        </div>
+
+      </div>
+    <h3>Simple Quote Retrival</h3>
+       <h3>Websocket connection</h3>
+
+    <div id="streamer" class="streamer">
+      <div>
+       <label for="quoteSubscribe">Subscribe Quote</label>
+       <input type="text" id="quoteSubscribe"/>
+      </div>
+      <div>
+        <label for="quoteDelete">Delete Quote</label>
+        <input type="text" id="quoteDelete"/>
+        </div> 
+   <div id="DataStreamer" class="dataStreamerField">
+      Hi!
+    </div>
+
+<script>
+  function convertHttpToWss(origin) {
+    if (origin.startsWith("https://")) {
+        return "wss://" + origin.substring(8);
+    } else if (origin.startsWith("http://")) {
+        return "ws://" + origin.substring(7);
+    } else {
+        return null; // Not a valid HTTP or HTTPS origin
+    }
+}
+
+// Example usage
+let httpOrigin = window.location.origin;
+let wssOrigin = convertHttpToWss(httpOrigin);
+console.log(wssOrigin);
+  const socket = new WebSocket(wssOrigin + "/ws");
+  
+  let dataStreamer = document.getElementById("DataStreamer");
+  const subscribeTextField = document.getElementById("quoteSubscribe");
+  const deleteTextField = document.getElementById("quoteDelete");
+
+  let connectionEstablished = false;
+  let trackedQuotes = new Map();
+  // Function to handle the key press event
+  function handleKeyPressSubscribe(event) {
+    if (event.key === 'Enter') {
+      console.log("Clicked");
+      console.log(event.target.value)
+      finalString = "QUOTE|" + event.target.value
+      if (connectionEstablished) {
+        socket.send(finalString)
+        event.target.value = ""
+      }
+      // You can add additional logic here if needed
+    }
+  }
+
+  function handleKeyPressDelete(event) {
+    if (event.key === "Enter") { 
+      console.log("Clicked")
+      console.log(event.target.value)
+      finalString = "DELETE|" + event.target.value
+      if (connectionEstablished) {
+        socket.send(finalString)
+        event.target.value = ""
+      }
+
+    }
+  }
+
+  // Add event listeners to the input fields
+  subscribeTextField.addEventListener("keypress", handleKeyPressSubscribe);
+  deleteTextField.addEventListener("keypress", handleKeyPressDelete);
+  dataState = {}
+  socket.onopen = function(e) {
+    console.log("Socket connection established");
+    connectionEstablished = true;
+  };
+  
+  socket.onmessage = function(e) {
+    e.data.split(" ")
+        processMessage(e.data)
+
+  };
+
+  socket.onclose = function(e) {
+    console.log("Socket connection closed");
+    connectionEstablished = false;
+  };
+
+  socket.onerror = function(e) {
+    console.error("Error occurred");
+    console.error(e);
+  };
+  
+  function processMessage(message) {
+     if (message.startsWith("Tracking quote")) {
+      let symbol = message.split(" ")[2];
+      trackedQuotes.set(symbol, "");
+    } else if (message.startsWith("Stop tracking quote")) {
+      let symbol = message.split(" ")[3];
+      trackedQuotes.delete(symbol);
+    } else {
+      let parts = message.split(" ");
+      let symbol = parts[0].split("{")[1];
+      let price = parts[1];
+      let time = parts.slice(3).join(" ");
+      console.log(parts, symbol, time, trackedQuotes, trackedQuotes.has(symbol))
+      if (trackedQuotes.has(symbol)) {
+        let displayMessage = `Update: ${symbol} is at ${price} as of ${time}`;
+        trackedQuotes.set(symbol, displayMessage); // Update the message for the specific stock
+      }
+    }
+
+    // Update the display for all tracked stocks
+    let allUpdates = Array.from(trackedQuotes.values()).join("\n");
+    dataStreamer.innerText = allUpdates;
+  }
+</script>
+
+     </body>
 </html>
