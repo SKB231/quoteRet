@@ -23,6 +23,7 @@ type FakeUserAgentsResponse struct {
 func GetUserAgentList(fakeUserAgentsBuffer chan string) {
 	// ScrapeOps User-Agent API Endpint
 	scrapeopsAPIKey := os.Getenv("SCRAPE_OPS_KEY")
+	scrapeopsAPIKey = "7a23f97c-aada-4964-9e1c-cf16b3dfc762"
 	scrapeopsAPIEndpoint := "http://headers.scrapeops.io/v1/user-agents?api_key=" + scrapeopsAPIKey
 
 	req, _ := http.NewRequest("GET", scrapeopsAPIEndpoint, nil)
@@ -77,30 +78,39 @@ func getQuotePriceAndTime(quote string, c *colly.Collector, userAgent string, ve
 	return quotePrice, quoteTime
 }
 
+
+func filterCollyResult(resp *colly.HTMLElement, quote string, setParam *string) {
+	if resp.Attr("data-field") == "regularMarketPrice" && resp.Attr("data-symbol") == quote {
+		*setParam = resp.Text
+	}
+}
 // FOR SIMPLE HTTP CALLS
-func getQuotePrice(quote string, c *colly.Collector, userAgent string) float32 {
+func getQuotePrice(quote string, c *colly.Collector, userAgent string) string {
+	strings.ReplaceAll(quote, ".", "/.")
 	URL := fmt.Sprintf("https://finance.yahoo.com/quote/%v", quote)
-	var quotePrice float32
+	var quotePrice string
+	
+
 	c.OnRequest(func(r *colly.Request) {
 		r.Headers.Set("User-Agent", userAgent)
 		fmt.Println("Visiting ", r.AbsoluteURL(string(r.URL.String())))
 	})
-	quoteSelector := fmt.Sprintf(`fin-streamer[data-symbol=%v][data-field=regularMarketPrice]`, quote)
-	c.OnResponse(func(r *colly.Response) {
-		fmt.Println(r.StatusCode)
-	})
-	c.OnHTML(quoteSelector, func(r *colly.HTMLElement) {
-		qprice, err := strconv.ParseFloat(r.Text, 32)
-		if err != nil {
-			fmt.Println("Error when parsing float price.")
-			quotePrice = -1
-		} else {
-			quotePrice = float32(qprice)
-			fmt.Println("HTML quote price", quotePrice)
+	finished := false;
+	c.OnHTML("fin-streamer", func(resp *colly.HTMLElement) {
+		filterCollyResult(resp, quote, &quotePrice)
+		if quotePrice != "" && !finished{
+			fmt.Println("Reached here with result! ");
+			finished = true;
+			return	
 		}
+	})
+	c.OnError(func(r *colly.Response, err error) {
+		fmt.Println("Request URL:", r.Request.URL, " failed with response: ", r, "\nError:", err);
 	})
 	fmt.Println("Calling Visit on URL ", URL)
 	c.Visit(URL)
+	c.Wait()
+	fmt.Println("Returning", quotePrice);
 	return quotePrice
 }
 
@@ -115,7 +125,7 @@ func handleStringQuotePrice(w http.ResponseWriter, r *http.Request) {
 	// collector := c.Clone()
 	userAgent := <-fakeUserAgents
 	fmt.Println("Calling getQuotePrice with", quoteName, userAgent)
-	price := getQuotePrice(quoteName, c, userAgent)
+	price := getQuotePrice(quoteName, c.Clone(), userAgent)
 	fmt.Fprintf(w, "%v", price)
 }
 
@@ -354,7 +364,8 @@ func main() {
 	// GetNextCountPrices(5, "AAPL", c)
 	// GetNextCountPrices(1, "AAPL", c)
 
-	// fmt.Println("Listening to port 8080!")
 	listenTo := os.Getenv("ADDRESS") + ":" + os.Getenv("PORT")
+	listenTo = ":3000"
+	fmt.Println("Listening to ", listenTo)
 	log.Fatal(http.ListenAndServe(listenTo, nil))
 }
