@@ -298,6 +298,7 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 
 func allowOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// TODO: Only allow 2 URLs. Current origin and gtequityResearch.
 		next.ServeHTTP(w, r);
 	})
 }
