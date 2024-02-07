@@ -1,12 +1,7 @@
 FROM golang:1.21.3
 
 WORKDIR /app
-COPY template.html .
-COPY go.mod .
-COPY main.go .
-COPY go.sum .
-COPY template.html .
-COPY linkParser .
+COPY . .
 RUN go build -o bin .
 
 ENV SCRAPE_OPS_KEY="7a23f97c-aada-4964-9e1c-cf16b3dfc762"

@@ -338,7 +338,6 @@ func main() {
 	// GetNextCountPrices(1, "AAPL", c)
 
 	listenTo := os.Getenv("ADDRESS") + ":" + os.Getenv("PORT")
-	listenTo = ":3000"
 	fmt.Println("Listening to ", listenTo)
 	log.Fatal(http.ListenAndServe(listenTo, nil))
 }
