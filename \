@@ -298,13 +298,14 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 
 func allowOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println(r.URL.Host, r.URL.Hostname, r.Host);
 		next.ServeHTTP(w, r);
 	})
 }
 
 func main() {
 	http.Handle("/quotePrice", allowOrigin(http.HandlerFunc(handleStringQuotePrice)))
-	http.Handle("/ws", allowOrigin(http.HandlerFunc(wsEndpoint)))
+	http.Handle("/ws", allowOrigin(http.HandlerFunc(wsEndpoint)))))))))))
 	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Request URL is ", r.URL)
 		tmpl, err := template.ParseFiles("template.html")
