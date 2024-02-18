@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -75,10 +77,10 @@ func getQuotePriceAndTime(quote string,userAgent string, version int) (string, s
 }
 
 
-func getQuotePrice(quote string, userAgent string) string {
+func getQuotePrice(quote string, userAgent string) (string, string) {
 	//strings.ReplaceAll(quote, ".", "/.")
-	resPrice, _ := getQuotePriceAndTime(quote, userAgent, -1);
-	return resPrice
+	resPrice, time := getQuotePriceAndTime(quote, userAgent, -1);
+	return resPrice, time
 }
 
 var fakeUserAgents = make(chan string, 100)
@@ -89,8 +91,8 @@ func handleStringQuotePrice(w http.ResponseWriter, r *http.Request) {
 	// collector := c.Clone()
 	userAgent := <-fakeUserAgents
 	fmt.Println("Calling getQuotePrice with", quoteName, userAgent)
-	price := getQuotePrice(quoteName, userAgent)
-	fmt.Fprintf(w, "%v", price)
+	price, time := getQuotePrice(quoteName, userAgent)
+	fmt.Fprintf(w, "%v at %v", price, time)
 }
 
 type priceBufferType struct {
@@ -296,6 +298,87 @@ func wsEndpoint(w http.ResponseWriter, r *http.Request) {
 	go Reader(ws)
 }
 
+type interval string
+
+const (
+	WEEK_INTEVAL interval = "1wk"
+	MONTH_INTERVAL interval = "1mo"
+	DAY_INTERVAL interval = "1d"
+)
+
+func getCSVData(quote string, startTime string, endTime string, hopTime interval, userAgent string) (string, error){
+	reqUrl := fmt.Sprintf("https://query1.finance.yahoo.com/v7/finance/download/%v?period1=%v&period2=%v&interval=%v", quote, startTime, endTime, hopTime)
+	urlObj, err := url.Parse(reqUrl)
+	
+	if err != nil {
+		fmt.Printf("Error occured when retriving historical data %v \n", err)
+		return "", err
+	}
+
+	req := http.Request{
+		Method: "GET",
+		Header: map[string][]string{
+			"User-Agent": []string{userAgent},
+		},
+		URL: urlObj,
+	}
+
+	resp, err := http.DefaultClient.Do(&req);
+	if err != nil {
+		fmt.Printf("Error occured when retriving historical data %v \n", err)
+		return "", err
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Error occured when retriving historical data %v \n", err)
+		return "", err
+	}
+
+	return string(data), nil
+}
+
+// Extracts the query arguments to return at max 3 years worth of data points
+func getHistoricalData(w http.ResponseWriter, r *http.Request) {
+	period := r.URL.Query().Get("period")
+	quote := r.URL.Query().Get("quote")
+	if period == "" || quote == "" {
+		w.Write([]byte("Not enough arguments"))
+		return
+	}
+	pi, err := strconv.ParseInt(period, 10, 64)
+	if err != nil {
+		w.Write([]byte("Time endpoints incorrect"))
+		return
+	}
+	unixTime := time.Unix(pi, 0)
+	var dayCount int64 = ((pi/3600.0)/24.0)
+
+	if dayCount > 365*3 {
+		unixTime = time.Unix(31556926*3, 0)
+		dayCount = 365*3
+	}
+	
+
+	nowTime := time.Now()
+	prevTime := nowTime.Sub(unixTime)
+	nowTimeStr := fmt.Sprintf("%v", nowTime.Unix())
+	prevTimeStr := fmt.Sprintf("%v", int(prevTime.Seconds()))
+	timePeriod := MONTH_INTERVAL
+	if dayCount < 32 {
+		timePeriod = DAY_INTERVAL
+	} else if dayCount < 225 {
+		timePeriod = WEEK_INTEVAL
+	}
+	fmt.Println(timePeriod, dayCount)
+
+	csvData, err := getCSVData(quote, prevTimeStr, nowTimeStr, timePeriod, <- fakeUserAgents)
+	if err != nil {
+		w.Write([]byte("Error occured with historical data retrival! " + err.Error()))
+		return
+	}
+	w.Write([]byte(csvData))
+}
+
 func allowOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// TODO: Only allow 2 URLs. Current origin and gtequityResearch.
@@ -306,6 +389,7 @@ func allowOrigin(next http.Handler) http.Handler {
 func main() {
 	http.Handle("/quotePrice", allowOrigin(http.HandlerFunc(handleStringQuotePrice)))
 	http.Handle("/ws", allowOrigin(http.HandlerFunc(wsEndpoint)))
+	http.Handle("/getHistorical", allowOrigin(http.HandlerFunc(getHistoricalData)))
 	http.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Request URL is ", r.URL)
 		tmpl, err := template.ParseFiles("template.html")
@@ -324,7 +408,7 @@ func main() {
 	go func() {
 		for {
 			// fmt.Println("Fake users list length ", len(fakeUserAgents))
-			if len(fakeUserAgents) < 10 {
+			if len(fakeUserAgents) < 20 {
 				fmt.Println("Getting more fake user agents.")
 				GetUserAgentList(fakeUserAgents)
 				fmt.Println("New Count: ", len(fakeUserAgents))
@@ -338,6 +422,11 @@ func main() {
 	// GetNextCountPrices(1, "AAPL", c)
 
 	listenTo := os.Getenv("ADDRESS") + ":" + os.Getenv("PORT")
+	if listenTo == ":" {
+		//Debug mode
+		listenTo = ":3000"
+	}
+	fmt.Println(listenTo == "", len(listenTo))
 	fmt.Println("Listening to ", listenTo)
 	log.Fatal(http.ListenAndServe(listenTo, nil))
 }
