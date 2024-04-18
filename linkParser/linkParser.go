@@ -12,12 +12,10 @@ func returnNodeType(node *html.Node) string {
 	return nodeTypeName[node.Type]
 }
 
-
 type ParseResult struct {
 	Price string
-	Time string
+	Time  string
 }
-
 
 // dfs method takes a single node, and a boolean and goes over every available node in the dfs Tree.
 // Only set the childAnchor to true if the next node is the child of an anchor tag.
@@ -28,10 +26,8 @@ func dfs(node *html.Node, quote string, result *ParseResult) {
 		return
 	}
 
-
 	if node.Type == 3 && node.Data == "fin-streamer" {
 		// We have reached an fin-streamer tag. Extract the available tags and their values. One of them contains the required data.
-
 		dataFieldVal := ""
 		dataFieldType := ""
 		dataSymbolField := ""
@@ -39,27 +35,27 @@ func dfs(node *html.Node, quote string, result *ParseResult) {
 			switch attr.Key {
 			case "data-field":
 				dataFieldType = attr.Val
-			case "value":
+			case "data-value":
 				dataFieldVal = attr.Val
 			case "data-symbol":
 				dataSymbolField = attr.Val
 			}
 		}
-		if dataFieldType == "regularMarketPrice" && dataFieldVal != "" && dataSymbolField == quote{
+		if dataFieldType == "regularMarketPrice" && dataFieldVal != "" && dataSymbolField == quote {
 			result.Price = dataFieldVal
 		}
-		
+
 	} else if node.Type == 3 && node.Data == "div" {
 		id := ""
 		for _, attr := range node.Attr {
 			switch attr.Key {
-			case "id":
+			case "slot":
 				id = attr.Val
 			}
 		}
-		if id == "quote-market-notice"{
-			if node.FirstChild != nil && node.FirstChild.FirstChild != nil{
-				result.Time = node.FirstChild.FirstChild.Data;
+		if id == "marketTimeNotice" {
+			if node.FirstChild != nil && node.FirstChild.FirstChild != nil {
+				result.Time = node.FirstChild.FirstChild.Data
 			}
 		}
 	}
