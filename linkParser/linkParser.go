@@ -1,8 +1,8 @@
 package linkParser
 
 import (
-	"fmt"
 	"io"
+	"strings"
 
 	"golang.org/x/net/html"
 )
@@ -26,26 +26,19 @@ func dfs(node *html.Node, quote string, result *ParseResult) {
 		return
 	}
 
-	if node.Type == 3 && node.Data == "fin-streamer" {
-		// We have reached an fin-streamer tag. Extract the available tags and their values. One of them contains the required data.
-		dataFieldVal := ""
-		dataFieldType := ""
-		dataSymbolField := ""
+	if node.Type == html.ElementNode && node.Data == "span" {
+		dataTestID := ""
 		for _, attr := range node.Attr {
-			switch attr.Key {
-			case "data-field":
-				dataFieldType = attr.Val
-			case "data-value":
-				dataFieldVal = attr.Val
-			case "data-symbol":
-				dataSymbolField = attr.Val
+			if attr.Key == "data-testid" {
+				dataTestID = attr.Val
+				break
 			}
 		}
-		if dataFieldType == "regularMarketPrice" && dataFieldVal != "" && dataSymbolField == quote {
-			result.Price = dataFieldVal
-		}
 
-	} else if node.Type == 3 && node.Data == "div" {
+		if dataTestID == "qsp-price" && result.Price == "" {
+			result.Price = strings.TrimSpace(nodeText(node))
+		}
+	} else if node.Type == html.ElementNode && node.Data == "div" {
 		id := ""
 		for _, attr := range node.Attr {
 			switch attr.Key {
@@ -68,14 +61,28 @@ func dfs(node *html.Node, quote string, result *ParseResult) {
 	}
 }
 
+func nodeText(node *html.Node) string {
+	if node == nil {
+		return ""
+	}
+	if node.Type == html.TextNode {
+		return node.Data
+	}
+
+	var builder strings.Builder
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		builder.WriteString(nodeText(child))
+	}
+	return builder.String()
+}
+
 // Parse function
 // @param r io.Reader this is the reader to the text containing the html to read. An array containing link Result structs is returned.
 func Parse(r io.Reader, quote string) (ParseResult, error) {
+
 	doc, err := html.Parse(r)
 	var parseRes ParseResult // Not the best way to send back data but we only have 2 strings so not expensive.
 	if err != nil {
-		fmt.Println("Error parsing document")
-		fmt.Println(err)
 		return ParseResult{}, err
 	}
 	dfs(doc, quote, &parseRes)
